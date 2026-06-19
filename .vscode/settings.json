@@ -1,0 +1,5 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/bili_live/.venv/bin/python",
+  "mypy-type-checker.cwd": "${workspaceFolder}/backend/bili_live",
+  "mypy-type-checker.args": ["--config-file=${workspaceFolder}/backend/bili_live/pyproject.toml"]
+}
