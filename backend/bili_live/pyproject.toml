@@ -5,7 +5,11 @@ description = "B站直播弹幕/礼物接收器"
 requires-python = ">=3.10"
 dependencies = [
     "blivedm",
+    "browser-cookie3",
 ]
+
+[dependency-groups]
+dev = ["mypy"]
 
 [tool.uv]
 # 这是一个可运行的服务脚本,不是要构建发布的包,关掉 package 模式
@@ -17,5 +21,5 @@ blivedm = { git = "https://github.com/xfgryujk/blivedm.git" }
 
 [[tool.mypy.overrides]]
 # blivedm 是第三方库且未提供类型信息(无 py.typed/stub),让 mypy 跳过对它的类型分析
-module = ["blivedm", "blivedm.*"]
+module = ["blivedm", "blivedm.*", "browser_cookie3"]
 ignore_missing_imports = true

@@ -54,20 +54,24 @@ def dispatch(event: LiveEvent) -> None:
 # ---- 同一个 Handler 同时实现 web 与 open_live 两套回调 ----------------------
 
 class LumenHandler(blivedm.BaseHandler):
+    def __init__(self, on_event=dispatch):
+        super().__init__()
+        self._emit = on_event
+
     # web 接口回调
     def _on_danmaku(self, client, message: web_models.DanmakuMessage):
-        dispatch(LiveEvent('danmaku', message.uname, client.room_id, text=message.msg))
+        self._emit(LiveEvent('danmaku', message.uname, client.room_id, text=message.msg))
 
     def _on_gift(self, client, message: web_models.GiftMessage):
         # 金瓜子才是付费;total_coin 单位为瓜子,1000 金瓜子 = 1 元
         rmb = message.total_coin / 1000 if message.coin_type == 'gold' else 0.0
-        dispatch(LiveEvent(
+        self._emit(LiveEvent(
             'gift', message.uname, client.room_id,
             gift_name=message.gift_name, gift_num=message.num, price_rmb=rmb,
         ))
 
     def _on_super_chat(self, client, message: web_models.SuperChatMessage):
-        dispatch(LiveEvent(
+        self._emit(LiveEvent(
             'super_chat', message.uname, client.room_id,
             text=message.message, price_rmb=float(message.price),
         ))
@@ -75,30 +79,30 @@ class LumenHandler(blivedm.BaseHandler):
     def _on_user_toast_v2(self, client, message: web_models.UserToastV2Message):
         # source==2 是续费提示,过滤掉只保留实际开通/上舰
         if message.source != 2:
-            dispatch(LiveEvent(
+            self._emit(LiveEvent(
                 'guard', message.username, client.room_id,
                 guard_level=message.guard_level,
             ))
 
     # open_live 接口回调
     def _on_open_live_danmaku(self, client, message: open_models.DanmakuMessage):
-        dispatch(LiveEvent('danmaku', message.uname, message.room_id, text=message.msg))
+        self._emit(LiveEvent('danmaku', message.uname, message.room_id, text=message.msg))
 
     def _on_open_live_gift(self, client, message: open_models.GiftMessage):
         rmb = (message.price * message.gift_num) / 1000 if message.paid else 0.0
-        dispatch(LiveEvent(
+        self._emit(LiveEvent(
             'gift', message.uname, message.room_id,
             gift_name=message.gift_name, gift_num=message.gift_num, price_rmb=rmb,
         ))
 
     def _on_open_live_super_chat(self, client, message: open_models.SuperChatMessage):
-        dispatch(LiveEvent(
+        self._emit(LiveEvent(
             'super_chat', message.uname, message.room_id,
             text=message.message, price_rmb=float(message.rmb),
         ))
 
     def _on_open_live_buy_guard(self, client, message: open_models.GuardBuyMessage):
-        dispatch(LiveEvent(
+        self._emit(LiveEvent(
             'guard', message.user_info.uname, message.room_id,
             guard_level=message.guard_level,
         ))
@@ -106,11 +110,12 @@ class LumenHandler(blivedm.BaseHandler):
 
 # ---- 按模式构建 client 并运行 ----------------------------------------------
 
-async def run_web() -> None:
+async def run_web(on_event=dispatch) -> None:
     room_id = int(os.environ['BILI_ROOM_ID'])
     sessdata = os.environ.get('BILI_SESSDATA', '')
     if not sessdata:
-        print('[warn] 未设置 BILI_SESSDATA,用户名会打码、UID 为 0', flush=True)
+        print('[warn] 未设置 BILI_SESSDATA:弹幕文本仍能收到,但用户名会打码(如 正***)、'
+              'UID 为 0。要完整用户名/UID 请设置', flush=True)
 
     cookies = http.cookies.SimpleCookie()
     cookies['SESSDATA'] = sessdata
@@ -119,7 +124,7 @@ async def run_web() -> None:
     session.cookie_jar.update_cookies(cookies)
 
     client = blivedm.BLiveClient(room_id, session=session)
-    client.set_handler(LumenHandler())
+    client.set_handler(LumenHandler(on_event))
     client.start()
     print(f'[web] 已连接直播间 {room_id},等待事件...', flush=True)
     try:
@@ -129,14 +134,14 @@ async def run_web() -> None:
         await session.close()
 
 
-async def run_open_live() -> None:
+async def run_open_live(on_event=dispatch) -> None:
     client = blivedm.OpenLiveClient(
         access_key_id=os.environ['BILI_ACCESS_KEY_ID'],
         access_key_secret=os.environ['BILI_ACCESS_KEY_SECRET'],
         app_id=int(os.environ['BILI_APP_ID']),
         room_owner_auth_code=os.environ['BILI_ROOM_OWNER_AUTH_CODE'],
     )
-    client.set_handler(LumenHandler())
+    client.set_handler(LumenHandler(on_event))
     client.start()
     print('[open_live] 已通过开放平台连接,等待事件...', flush=True)
     try:
@@ -145,12 +150,12 @@ async def run_open_live() -> None:
         await client.stop_and_close()
 
 
-async def main() -> None:
+async def main(on_event=dispatch) -> None:
     mode = os.environ.get('LUMEN_BILI_MODE', 'web')
     if mode == 'open_live':
-        await run_open_live()
+        await run_open_live(on_event)
     elif mode == 'web':
-        await run_web()
+        await run_web(on_event)
     else:
         raise SystemExit(f'未知 LUMEN_BILI_MODE={mode!r},应为 web 或 open_live')
 
