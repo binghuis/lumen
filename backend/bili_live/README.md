@@ -49,6 +49,23 @@ uv run python auto_reply.py
 > - 自动发弹幕有**被限流/封号**风险:用测试账号、低频率(`REPLY_MIN_INTERVAL` 别调太低)、在自己/测试房间跑。
 > - 已内置**节流**和**自过滤**(跳过自己刚发的弹幕,防自激循环)。
 
+## 语音回复 live_vtuber.py(mode B:大模型 + TTS 语音播报)
+
+读弹幕 → 火山豆包生成口语回复 → edge-tts 合成 → 本机扬声器播。这是 VTuber 的真形态(语音,不发弹幕)。
+
+```bash
+export BILI_ROOM_ID=<直播间ID>
+export ARK_API_KEY=<方舟key> ARK_MODEL=<接入点ID>
+# 可选:export BILI_SESSDATA=<...>(用户名不打码) TTS_VOICE=zh-CN-XiaoxiaoNeural
+uv run python live_vtuber.py
+```
+
+有弹幕进来就会听到 AI 语音回应。**单飞**:一句说完再说下一句,说话时新弹幕进队列(`VTUBER_QUEUE_MAX`,默认 2),满了丢弃保新鲜。
+
+- 回复人格 = `brain.py` 的 `SYSTEM_PROMPT`,在那里打磨角色。
+- v1 用 edge-tts(免费)+ 本机扬声器;v2 换火山 TTS(声音复刻)+ 流式 + 虚拟声卡接 OBS,并加 Live2D 口型。
+- 播放用 macOS `afplay`(本机假定 macOS)。
+
 ## 切到 open_live 模式(审核通过后)
 
 需要你本人在 B站 完成的一次性开通(代码替不了):
