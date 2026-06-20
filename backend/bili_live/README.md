@@ -83,6 +83,27 @@ uv run python live_vtuber.py
 - v2 待办:火山**流式**降延迟 + 声音复刻统一音色 + 虚拟声卡接 OBS + Live2D 口型。
 - 播放用 macOS `afplay`(本机假定 macOS)。
 
+**火山 SeedTTS 2.0 接口要点(踩坑记录)**:
+- 端点 `POST https://openspeech.bytedance.com/api/v3/tts/unidirectional`
+- 头 `X-Api-Key` = 语音控制台**专门的 API Key**(UUID 形如 `e08a...`);app 凭据页的 **Access Token / Secret Key、方舟 Ark key 都无效**(报 `45000010 Invalid X-Api-Key`)
+- 头 `X-Api-Resource-Id: seed-tts-2.0`
+- 体 `req_params{text, speaker=<音色>, audio_params{format:mp3, sample_rate:24000}}`
+- 返回逐行 JSON:`code==0` 带 base64 音频分片、`20000000` 结束
+- 音色示例:`saturn_zh_female_keainvsheng_tob`(可爱女声)
+
+## 音频上流(本机 macOS)
+
+让 TTS 语音进直播流的本机方案:TTS(afplay)→ 多输出设备 → 扬声器(自己听)+ BlackHole(虚拟声卡)→ 采集软件 → 推流。
+
+1. `brew install --cask blackhole-2ch obs`(BlackHole 是音频驱动,装后跑 `sudo killall coreaudiod` 或重启,设备才出现)
+2. 「音频 MIDI 设置」→ 建**多输出设备**(命名如 `Lumen上流`):勾 **BlackHole 2ch** + **扬声器**;主设备=扬声器,给 **BlackHole** 勾「漂移校正」
+3. 系统设置 → 声音 → 输出 → 选该多输出设备
+4. 采集软件加「音频输入采集」→ 设备选 **BlackHole 2ch**
+5. 验证:播一句 TTS,采集软件电平条跳动即通(已实测通过)
+
+> ⚠️ 多输出设备会把**所有**系统声音(通知音等)灌进流——直播时静音其他 app;且多输出设备下系统音量键失效(macOS 限制)。
+> ⚠️ **推流约束**:OBS/第三方推流码需**粉丝 ≥5000**;B站直播姬仅 Windows;**Mac + 低粉账号此路不通**(详见 `docs/implementation-plan.md` 开放问题)。
+
 ## 切到 open_live 模式(审核通过后)
 
 需要你本人在 B站 完成的一次性开通(代码替不了):
