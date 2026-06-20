@@ -1,7 +1,8 @@
-# B站弹幕/礼物接收器
+# B站 AI VTuber 后端(弹幕 → 豆包 → 火山 TTS)
 
-把 B站 直播间的弹幕、礼物、醒目留言(SC)、上舰事件归一成 `LiveEvent`,经 `dispatch()` 下发。
-目标:先跑通"事件流入"这条管线。`dispatch()` 是后续接大脑/导演层的边界。
+读 B站 直播间弹幕/礼物/SC/上舰(归一成 `LiveEvent`),交给大模型生成有人格的回复,再用 TTS 语音播报。
+三个入口:`receiver.py`(只收事件)、`auto_reply.py`(读到→回发弹幕,mode A)、`live_vtuber.py`(读到→豆包→语音,mode B,产品主形态)。
+`dispatch()` / `on_event` 是事件下游的边界。
 
 ## 两种模式
 
@@ -10,12 +11,27 @@
 | `web` | 申请审核前先跑通(非官方接口) | 直播间 `room_id`(+可选 `SESSDATA`) |
 | `open_live` | 正式用(官方直播开放平台,稳定合规) | 开放平台密钥 + `app_id` + 主播身份码 |
 
-## 安装(uv)
+## 部署 / 换机(从零)
+
+换电脑**不用重搭环境**——代码和依赖跟着仓库走,系统音频另配。
 
 ```bash
-cd backend/bili_live
-uv sync          # 读 pyproject.toml,创建 .venv 并装好依赖(blivedm 从 git 构建)
+git clone <仓库> && cd backend/bili_live
+uv sync                              # 复现整个 Python 环境(.venv + 锁定依赖,Python 由 uv 自动下)
+cp .env.example .env                 # 再把 key 填进 .env(或直接拷旧机的 .env 过来)
+set -a && source .env && set +a      # 加载环境变量
+uv run python live_vtuber.py
 ```
+
+| 资产 | 进 git? | 换机怎么办 |
+|---|---|---|
+| 代码 + `pyproject.toml` + **`uv.lock`** | ✅ | `git clone` + `uv sync`,零手工、版本一致 |
+| `.env.example` | ✅ | 模板,照着填 |
+| `.env`(密钥) | ❌ gitignore | 拷旧机的,或按模板重填(key 是账号级,到处通用) |
+| `.venv` | ❌ gitignore | `uv sync` 自动重建,不用管 |
+| BlackHole / OBS / 多输出设备 | ❌(系统级) | **仅推流那台**机器重配一次(~10 分钟) |
+
+> 前提:这些得先 `git commit` + `push`,才谈得上"跟项目走"。`.env`/`.venv` 已被 gitignore,不会上传。
 
 ## 跑通 web 模式(今天就能测)
 
@@ -63,7 +79,8 @@ uv run python live_vtuber.py
 有弹幕进来就会听到 AI 语音回应。**单飞**:一句说完再说下一句,说话时新弹幕进队列(`VTUBER_QUEUE_MAX`,默认 2),满了丢弃保新鲜。
 
 - 回复人格 = `brain.py` 的 `SYSTEM_PROMPT`,在那里打磨角色。
-- v1 用 edge-tts(免费)+ 本机扬声器;v2 换火山 TTS(声音复刻)+ 流式 + 虚拟声卡接 OBS,并加 Live2D 口型。
+- **TTS**:设了 `VOLC_TTS_API_KEY` → 走火山 SeedTTS 2.0(saturn 可爱女声等);否则回落 edge-tts。`VOLC_TTS_API_KEY` 是语音控制台**专门的 API Key**,不是 app 的 Access Token/Secret、也不是 Ark key。
+- v2 待办:火山**流式**降延迟 + 声音复刻统一音色 + 虚拟声卡接 OBS + Live2D 口型。
 - 播放用 macOS `afplay`(本机假定 macOS)。
 
 ## 切到 open_live 模式(审核通过后)
