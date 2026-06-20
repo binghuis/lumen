@@ -680,6 +680,7 @@ name = "lumen-bili-live"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "blivedm" },
     { name = "browser-cookie3" },
     { name = "edge-tts" },
@@ -693,6 +694,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp" },
     { name = "blivedm", git = "https://github.com/xfgryujk/blivedm.git" },
     { name = "browser-cookie3" },
     { name = "edge-tts" },
