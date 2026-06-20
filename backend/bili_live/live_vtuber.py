@@ -18,6 +18,7 @@ import os
 from collections import deque
 
 import brain
+import director
 import receiver
 import voice
 from receiver import LiveEvent
@@ -70,6 +71,9 @@ async def main() -> None:
         else:
             print('[live] 无 SESSDATA,用户名会打码(不影响回应)', flush=True)
 
+    vts = director.Director()
+    _vts_task = asyncio.create_task(vts.connect())   # 后台连 VTS,不阻塞收弹幕/语音;没开/没批准会优雅降级
+
     qmax = int(os.environ.get('VTUBER_QUEUE_MAX', '2'))
     casual: deque[str] = deque()         # 普通弹幕 + 免费礼物:满 qmax 就丢新来的,保新鲜
     priority: deque[str] = deque()       # 付费礼物/SC/上舰:不丢、优先;高峰时这一波合成一句一起谢,避免漏谢又不积压陈旧答谢
@@ -104,7 +108,10 @@ async def main() -> None:
                     casual_turn = False
                 try:
                     print(f'[brain] {sit}', flush=True)
-                    async for sentence in brain.reply_stream(sit):   # 边出句边播,首句先开口
+                    # 开头情绪标签 → 触发 VTS 表情(边出句边播,首句先开口)
+                    async for sentence in brain.reply_stream(
+                        sit, on_emotion=vts.trigger_bg
+                    ):
                         print(f'  -> {sentence}', flush=True)
                         await voice.speak(sentence)
                 except Exception as e:
@@ -115,6 +122,8 @@ async def main() -> None:
         await receiver.run_web(on_event=on_event)
     finally:
         w.cancel()
+        _vts_task.cancel()
+        await vts.close()
 
 
 if __name__ == '__main__':

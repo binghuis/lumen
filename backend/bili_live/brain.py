@@ -12,11 +12,21 @@ SYSTEM_PROMPT 是人格占位,后续在这里打磨角色。
 """
 import os
 from collections import deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import httpx
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
+
+# 情绪词表(唯一源):豆包按它在每句最前吐 [情绪] 标签,导演层(director)据此触发 VTS 同名热键。
+EMOTIONS = ('开心', '惊讶', '害羞', '生气', '思考', '平静')
+_EMOTION_TAGS = ''.join(f'[{e}]' for e in EMOTIONS)
+# 一个合法标签就「[情绪]」= 情绪字数 + 一对括号;head 超过这个长度还没等到右括号,
+# 就判定它不是标签,别再憋着流式不出句。
+_EMOTION_TAG_MAXLEN = max(len(e) for e in EMOTIONS) + 2  # +2:一对括号
+# 提示词给的是半角 [],但中文模型常吐成全角【】／［］;开闭括号都认,免得标签被当正文念出来。
+_OPEN_BRACKETS = '[【［'
+_CLOSE_BRACKETS = ']】］'
 
 SYSTEM_PROMPT = (
     '你叫「流明」,一个 AI 虚拟主播,正在 B 站直播。性格机智爱整活、嘴甜带点小傲娇,擅长接梗陪聊。\n'
@@ -26,7 +36,8 @@ SYSTEM_PROMPT = (
     '- 称呼观众可用名字或「宝子/老板」;送礼物要热情道谢,醒目留言先回应留言内容再谢,开通舰长/提督/总督格外隆重。\n'
     '- 被问是不是 AI 就大方承认还能自嘲,别尴尬。\n'
     '- 不带货、不引战;遇到不当或敏感话题轻巧岔开别接。\n'
-    '- 直接说话:不要解释、不要列点、不要加括号动作、不要加引号。'
+    f'- 每条回复**最前面**先标一个方括号情绪(从 {_EMOTION_TAGS} 里选一个),紧接说话内容,例:[开心]哈喽宝子~\n'
+    '- 直接说话:不要解释、不要列点、不要加圆括号动作描写、不要加引号(开头的方括号情绪除外)。'
 )
 
 _client: AsyncOpenAI | None = None
@@ -59,6 +70,22 @@ def _first_sentence_end(s: str) -> int | None:
     return None
 
 
+def _take_leading_emotion(head: str) -> tuple[bool, str, str]:
+    """判定开头的 [情绪] 前导(head 已 lstrip,全/半角括号都认)。返回 (decided, emotion, rest):
+    decided=False 表示标签还没收全、要等下一片;rest 是剥掉前导标签后、给 TTS 切句的文本
+    (无标签或超长没闭合时即 head 原样,照常念)。
+    """
+    if head == '':
+        return False, '', head            # 目前只有空白,继续等
+    if head[0] not in _OPEN_BRACKETS:
+        return True, '', head             # 开头不是括号,没有标签
+    end = next((i for i, c in enumerate(head) if c in _CLOSE_BRACKETS), -1)
+    if end == -1:
+        # 没等到右括号:没超长就再等下一片,超长就当它不是标签、照常念
+        return len(head) > _EMOTION_TAG_MAXLEN, '', head
+    return True, head[1:end].strip(), head[end + 1:]
+
+
 def _build_messages(situation: str) -> list[ChatCompletionMessageParam]:
     messages: list[ChatCompletionMessageParam] = [{'role': 'system', 'content': SYSTEM_PROMPT}]
     for past_sit, past_reply in _history:
@@ -78,11 +105,14 @@ def _remember(situation: str, text: str) -> None:
         _history.clear()
 
 
-async def reply_stream(situation: str) -> AsyncIterator[str]:
-    """流式:豆包 stream=True,按句边出边 yield——让 TTS 边出边播,首句先开口(提速核心)。
+async def reply_stream(
+    situation: str, on_emotion: Callable[[str], object] | None = None
+) -> AsyncIterator[str]:
+    """流式:豆包 stream=True。先解析开头的 [情绪] 标签(触发导演层表情),再按句吐说话内容。
 
-    带最近几轮短期记忆(`BRAIN_HISTORY_TURNS`,默认 6、0 关闭),不分观众(分人是长期记忆的事)。
-    整段成功后才记入历史:出错的这轮不污染记忆。
+    on_emotion 在解析出开头情绪时调用一次(同步,内部去调度 VTS 触发)。
+    带最近几轮短期记忆;整段成功后记入历史(连 [情绪] 标签一起留,在上下文里强化格式、别让模型几轮后
+    把标签丢了;只有 TTS 不读标签),出错的这轮、以及只吐出半截标签的退化输出,都不污染记忆。
     """
     stream = await _get_client().chat.completions.create(
         model=os.environ['ARK_MODEL'],
@@ -93,21 +123,31 @@ async def reply_stream(situation: str) -> AsyncIterator[str]:
     )
     full = ''
     buf = ''
+    emotion_done = False
     async for chunk in stream:
         delta = chunk.choices[0].delta.content if chunk.choices else None
         if not delta:
             continue
         full += delta
         buf += delta
-        while (idx := _first_sentence_end(buf)) is not None:
-            sentence = buf[:idx + 1].strip()
-            buf = buf[idx + 1:]
-            if sentence:
-                yield sentence
+        if not emotion_done:                      # 先抠出开头的 [情绪],别让它进 TTS
+            decided, emotion, rest = _take_leading_emotion(buf.lstrip())
+            if not decided:
+                continue                          # 前导标签还没判定完,先攒着
+            if emotion and on_emotion:
+                on_emotion(emotion)
+            buf = rest                            # 只动 buf:TTS 不读标签;full 保留原样(连标签留给记忆)
+            emotion_done = True
+        if emotion_done:                          # 已过 [情绪] 前导,开始切句
+            while (idx := _first_sentence_end(buf)) is not None:
+                sentence = buf[:idx + 1].strip()
+                buf = buf[idx + 1:]
+                if sentence:
+                    yield sentence
     tail = buf.strip()
-    if tail:
+    if emotion_done and tail:                 # 还没闭合标签就截断(buf 还是半截 [开心)→ 别念出去
         yield tail
-    _remember(situation, full.strip())
+    _remember(situation, full.strip() if emotion_done else '')
 
 
 async def reply(situation: str) -> str:
