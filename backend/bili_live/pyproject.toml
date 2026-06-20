@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "B站直播弹幕/礼物接收器"
 requires-python = ">=3.10"
 dependencies = [
+    "aiohttp",
     "blivedm",
     "browser-cookie3",
     "openai",
