@@ -12,6 +12,7 @@ SYSTEM_PROMPT 是人格占位,后续在这里打磨角色。
 """
 import os
 from collections import deque
+from collections.abc import AsyncIterator
 
 import httpx
 from openai import AsyncOpenAI
@@ -48,31 +49,67 @@ def _get_client() -> AsyncOpenAI:
     return _client
 
 
-async def reply(situation: str) -> str:
-    """一条现场情况 → 一句回应,带最近几轮短期记忆,让回应有连续性(接梗、跟话头、不复读)。
+_SENT_ENDS = frozenset('。!?！?…\n')
 
-    记忆是「全场最近发生过什么 + 我怎么接的」,不分观众(分人是长期记忆的事)。轮数 BRAIN_HISTORY_TURNS,
-    默认 6、设 0 关闭。只在成功生成后才记入历史:LLM 调用抛错的这轮不污染记忆。
-    """
+
+def _first_sentence_end(s: str) -> int | None:
+    for i, ch in enumerate(s):
+        if ch in _SENT_ENDS:
+            return i
+    return None
+
+
+def _build_messages(situation: str) -> list[ChatCompletionMessageParam]:
     messages: list[ChatCompletionMessageParam] = [{'role': 'system', 'content': SYSTEM_PROMPT}]
     for past_sit, past_reply in _history:
         messages.append({'role': 'user', 'content': past_sit})
         messages.append({'role': 'assistant', 'content': past_reply})
     messages.append({'role': 'user', 'content': situation})
+    return messages
 
-    resp = await _get_client().chat.completions.create(
-        model=os.environ['ARK_MODEL'],
-        messages=messages,
-        max_tokens=120,
-        temperature=0.8,
-    )
-    text = (resp.choices[0].message.content or '').strip()
 
+def _remember(situation: str, text: str) -> None:
     maxlen = int(os.environ.get('BRAIN_HISTORY_TURNS', '6'))
-    if maxlen > 0:
+    if maxlen > 0 and text:
         _history.append((situation, text))
         while len(_history) > maxlen:
             _history.popleft()
-    elif _history:
+    elif maxlen <= 0 and _history:
         _history.clear()
-    return text
+
+
+async def reply_stream(situation: str) -> AsyncIterator[str]:
+    """流式:豆包 stream=True,按句边出边 yield——让 TTS 边出边播,首句先开口(提速核心)。
+
+    带最近几轮短期记忆(`BRAIN_HISTORY_TURNS`,默认 6、0 关闭),不分观众(分人是长期记忆的事)。
+    整段成功后才记入历史:出错的这轮不污染记忆。
+    """
+    stream = await _get_client().chat.completions.create(
+        model=os.environ['ARK_MODEL'],
+        messages=_build_messages(situation),
+        max_tokens=120,
+        temperature=0.8,
+        stream=True,
+    )
+    full = ''
+    buf = ''
+    async for chunk in stream:
+        delta = chunk.choices[0].delta.content if chunk.choices else None
+        if not delta:
+            continue
+        full += delta
+        buf += delta
+        while (idx := _first_sentence_end(buf)) is not None:
+            sentence = buf[:idx + 1].strip()
+            buf = buf[idx + 1:]
+            if sentence:
+                yield sentence
+    tail = buf.strip()
+    if tail:
+        yield tail
+    _remember(situation, full.strip())
+
+
+async def reply(situation: str) -> str:
+    """非流式入口:把流式结果收集成整段。供测试/不需要边播的场景。"""
+    return ''.join([s async for s in reply_stream(situation)])

@@ -103,9 +103,10 @@ async def main() -> None:
                     sit = casual.popleft()
                     casual_turn = False
                 try:
-                    text = await brain.reply(sit)
-                    print(f'[brain] {sit}  ->  {text}', flush=True)
-                    await voice.speak(text)
+                    print(f'[brain] {sit}', flush=True)
+                    async for sentence in brain.reply_stream(sit):   # 边出句边播,首句先开口
+                        print(f'  -> {sentence}', flush=True)
+                        await voice.speak(sentence)
                 except Exception as e:
                     print(f'[worker] 跳过(出错): {e!r}', flush=True)
 
