@@ -9,7 +9,7 @@ SESSDATA 优先 env,没有就自动读浏览器(用户名才不打码)。
 环境变量:
   BILI_ROOM_ID       直播间号
   BILI_SESSDATA      可选,没有则尝试读浏览器;都没有则用户名打码
-  ARK_API_KEY / ARK_MODEL / ARK_BASE_URL   见 brain.py
+  ARK_API_KEY / ARK_MODEL / ARK_BASE_URL / BRAIN_HISTORY_TURNS   见 brain.py
   TTS_VOICE          edge-tts 音色,默认 zh-CN-XiaoxiaoNeural
   VTUBER_QUEUE_MAX   说话时普通弹幕/免费礼物最多积压几条,默认 2(付费礼物/SC/上舰不受此限)
 """

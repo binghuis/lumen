@@ -5,13 +5,17 @@
   ARK_API_KEY   方舟 API Key
   ARK_BASE_URL  方舟兼容 endpoint,默认 https://ark.cn-beijing.volces.com/api/v3
   ARK_MODEL     推理接入点 ID(在方舟控制台拿)
+  BRAIN_HISTORY_TURNS  短期记忆轮数,默认 6;设 0 退回纯单轮无记忆
 
 SYSTEM_PROMPT 是人格占位,后续在这里打磨角色。
+短期记忆见 _history:全场最近几轮「现场情况→我的回应」,给回应连续性(接梗、跟话头、不复读)。
 """
 import os
+from collections import deque
 
 import httpx
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
 SYSTEM_PROMPT = (
     '你叫「流明」,一个 AI 虚拟主播,正在 B 站直播。性格机智爱整活、嘴甜带点小傲娇,擅长接梗陪聊。\n'
@@ -25,6 +29,11 @@ SYSTEM_PROMPT = (
 )
 
 _client: AsyncOpenAI | None = None
+
+# 短期记忆:最近若干轮 (现场情况, 我的回应)。直播是「主播一个意识流」,记的是全场最近发生过
+# 什么 + 我怎么接的,不按观众分线(分人是长期 per-UID 记忆的事)。窗口大小每轮按 env 现读,
+# 便于以后 web 配置热改;退化到 0 即清空、回到纯单轮。
+_history: deque[tuple[str, str]] = deque()
 
 
 def _get_client() -> AsyncOpenAI:
@@ -40,14 +49,30 @@ def _get_client() -> AsyncOpenAI:
 
 
 async def reply(situation: str) -> str:
-    """单轮:一条现场情况 → 一句回应。v1 不带历史,先验通,后续再加上下文/记忆。"""
+    """一条现场情况 → 一句回应,带最近几轮短期记忆,让回应有连续性(接梗、跟话头、不复读)。
+
+    记忆是「全场最近发生过什么 + 我怎么接的」,不分观众(分人是长期记忆的事)。轮数 BRAIN_HISTORY_TURNS,
+    默认 6、设 0 关闭。只在成功生成后才记入历史:LLM 调用抛错的这轮不污染记忆。
+    """
+    messages: list[ChatCompletionMessageParam] = [{'role': 'system', 'content': SYSTEM_PROMPT}]
+    for past_sit, past_reply in _history:
+        messages.append({'role': 'user', 'content': past_sit})
+        messages.append({'role': 'assistant', 'content': past_reply})
+    messages.append({'role': 'user', 'content': situation})
+
     resp = await _get_client().chat.completions.create(
         model=os.environ['ARK_MODEL'],
-        messages=[
-            {'role': 'system', 'content': SYSTEM_PROMPT},
-            {'role': 'user', 'content': situation},
-        ],
+        messages=messages,
         max_tokens=120,
         temperature=0.8,
     )
-    return (resp.choices[0].message.content or '').strip()
+    text = (resp.choices[0].message.content or '').strip()
+
+    maxlen = int(os.environ.get('BRAIN_HISTORY_TURNS', '6'))
+    if maxlen > 0:
+        _history.append((situation, text))
+        while len(_history) > maxlen:
+            _history.popleft()
+    elif _history:
+        _history.clear()
+    return text
