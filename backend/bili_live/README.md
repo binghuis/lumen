@@ -18,6 +18,7 @@
 ```bash
 git clone <仓库> && cd backend/bili_live
 uv sync                              # 复现整个 Python 环境(.venv + 锁定依赖,Python 由 uv 自动下)
+brew install ffmpeg                  # 火山 TTS 流式播放用 ffplay(edge-tts 兜底用内置 afplay 则不需要)
 cp .env.example .env                 # 再把 key 填进 .env(或直接拷旧机的 .env 过来)
 set -a && source .env && set +a      # 加载环境变量
 uv run python live_vtuber.py
@@ -67,7 +68,7 @@ uv run python auto_reply.py
 
 ## 语音回复 live_vtuber.py(mode B:大模型 + TTS 语音播报)
 
-读弹幕 → 火山豆包生成口语回复 → edge-tts 合成 → 本机扬声器播。这是 VTuber 的真形态(语音,不发弹幕)。
+读弹幕 → 火山豆包生成口语回复 → 火山/edge-tts 合成 → 本机扬声器播(**流式边出边播**)。这是 VTuber 的真形态(语音,不发弹幕)。
 
 ```bash
 export BILI_ROOM_ID=<直播间ID>
@@ -79,9 +80,10 @@ uv run python live_vtuber.py
 有弹幕进来就会听到 AI 语音回应。**单飞**:一句说完再说下一句,说话时新弹幕进队列(`VTUBER_QUEUE_MAX`,默认 2),满了丢弃保新鲜。
 
 - 回复人格 = `brain.py` 的 `SYSTEM_PROMPT`,在那里打磨角色。
-- **TTS**:设了 `VOLC_TTS_API_KEY` → 走火山 SeedTTS 2.0(saturn 可爱女声等);否则回落 edge-tts。`VOLC_TTS_API_KEY` 是语音控制台**专门的 API Key**,不是 app 的 Access Token/Secret、也不是 Ark key。
-- v2 待办:火山**流式**降延迟 + 声音复刻统一音色 + 虚拟声卡接 OBS + Live2D 口型。
-- 播放用 macOS `afplay`(本机假定 macOS)。
+- **流式**:豆包 `stream=True` 按句吐 + 火山 SeedTTS 边出边播,首句先开口(`brain.reply_stream` + `voice.speak`)。
+- **TTS**:设了 `VOLC_TTS_API_KEY` → 火山 SeedTTS 2.0(saturn 可爱女声等,**流式 ffplay**,需 `brew install ffmpeg`);否则回落 edge-tts(afplay)。`VOLC_TTS_API_KEY` 是语音控制台**专门的 API Key**,不是 app 的 Access Token/Secret、也不是 Ark key。
+- ⚠️ **首响仍慢**:实测豆包免费「按Token付费」档 TTFT 3-8s 是瓶颈,流式解不了(火山 TTS 首包仅 0.57s)。需 TPM保障包 / 换云,详见 `docs/项目进度.md` 问题2。
+- v2 待办:声音复刻统一音色 + 虚拟声卡接 OBS + Live2D 口型。
 
 **火山 SeedTTS 2.0 接口要点(踩坑记录)**:
 - 端点 `POST https://openspeech.bytedance.com/api/v3/tts/unidirectional`
